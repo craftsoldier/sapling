@@ -1,0 +1,30 @@
+name: Lean
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  build:
+    # The single stable check to mark as a required status check.
+    name: Lean CI
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      # Installs the toolchain from lean-toolchain, fetches the Mathlib olean
+      # cache, and runs `lake build` on the targets named below, so a lakefile
+      # edit cannot silently shrink what CI builds.
+      - uses: leanprover/lean-action@38fbc41a8c28c4cbaec22d7f7de508ec2e7c0dd9 # v1.5.0
+        with:
+          build-args: "--wfail Sapling"
