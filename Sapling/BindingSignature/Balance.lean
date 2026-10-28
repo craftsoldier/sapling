@@ -34,13 +34,17 @@ Taken as inputs, not proved:
   algebraic group model (RedJubjub extractability), which is not formalized here. When
   `Rbase` generates a prime-order `M`, as in Sapling, such a `bsk'` always exists; what the
   assumption supplies is the key itself, so that the relation built from it is computed. Deployed
-  verification is cofactored, so extraction gives only `[8] • bvk = [8] • (bsk' • Rbase)`; the
-  exact form is not yet derived from it.
+  verification is cofactored, so extraction gives only `[8] • bvk = [8] • (bsk' • Rbase)`;
+  `§ Cofactored extraction` below derives the exact form from it. Obtaining the cofactored form by
+  straight-line extraction in the algebraic group model needs two things this model does not
+  provide: the fact that `[8]` maps the whole curve into the prime-order subgroup, and an adversary
+  whose point representations may use the small-order points.
 * **Value-commitment openings**: each spend and output comes with its opening `(v, rcv)`, which the
   spec obtains from Groth16 knowledge soundness and commitment binding.
 * **Model of the curve**: Jubjub's prime-order subgroup is an abstract `F`-module `M` containing
   `Vbase` and `Rbase`, and the trapdoors `rcv` are scalars in `F`. Jubjub as an explicit curve, and
-  the encoding of its points, are not modelled.
+  the encoding of its points, are not modelled. The full curve, where it appears
+  (`§ Cofactored extraction`), is an abstract group `G` into which `M` embeds injectively.
 * **No overflow**: the integer net value has magnitude below `r` (the `hbound` hypothesis), which
   the spec's stronger range (within `ValueCommitType`) implies. For Sapling it is reduced to value
   ranges, the transaction size limit and the `vBalance` encoding by `sapling_natAbs_lt_of_bytes`
@@ -255,5 +259,43 @@ theorem natAbs_lt_of_vSumBound {r : ℕ} (vs : List ℤ) (vBalance : ℤ) (N : �
     le_trans (abs_listSum_le hv) (mul_le_mul_of_nonneg_right hlen (by norm_num))
   calc |vs.sum - vBalance| ≤ |vs.sum| + |vBalance| := abs_sub _ _
     _ ≤ (N : ℤ) * (2^64 - 1) + 2^63 := add_le_add hs hvb
+
+/-! ### Cofactored extraction
+
+Deployed RedJubjub verification is cofactored: it accepts a signature `(R, S)` with challenge `c`
+when `[8] • (−S • Rbase + R + c • bvk) = 0` on the full curve, `8` being Jubjub's cofactor (spec
+§5.4.7 "RedDSA, RedJubjub, and RedPallas", §5.4.7.2 "Binding Signature (Sapling and Orchard)",
+§5.4.9.3 "Jubjub"). Jubjub has order `8 · r_𝕁`, so the `8` maps the check into the prime-order
+subgroup and extraction yields `bsk'` only with `[8] • bvk = [8] • (bsk' • Rbase)`; that order is a
+fact about Jubjub, not part of the model here. The `8` cancels for `bvk` in the prime-order
+subgroup. Value commitments are points of the full curve (§4.1.8 "Commitment"), and the consensus
+checks on the point itself reject only invalid encodings and small order (§4.4 "Spend Descriptions",
+§4.5 "Output Descriptions"), so that membership comes from the value-commitment openings, and so
+rests on the Spend and Output circuits binding each `cv` to its opening. -/
+
+/-- Cofactor cancellation: `h • ι x = h • ι y` gives `x = y` when `ι : M →+ G` is injective and `h`
+is nonzero in `F`. For Sapling, `M` is Jubjub's prime-order subgroup, `G` the full curve and
+`h = 8`; `h` is a natural number because `G` is not an `F`-module. -/
+theorem eq_of_nsmul_map_eq {G : Type*} [AddCommGroup G] (ι : M →+ G)
+    (hι : Function.Injective ι) {h : ℕ} (hh : (h : F) ≠ 0) {x y : M}
+    (hxy : h • ι x = h • ι y) : x = y := by
+  rw [← map_nsmul, ← map_nsmul] at hxy
+  have hM : (h : F) • x = (h : F) • y := by
+    rw [Nat.cast_smul_eq_nsmul, Nat.cast_smul_eq_nsmul]; exact hι hxy
+  have := congrArg ((h : F)⁻¹ • ·) hM
+  simpa only [smul_smul, inv_mul_cancel₀ hh, one_smul] using this
+
+/-- The cofactored extraction `hExtract8` yields the exact `hExtract` of
+`NontrivialRelation.ofBundleIntImbalance` through `eq_of_nsmul_map_eq`. -/
+example {r : ℕ} [Fact (Nat.Prime r)] {M G : Type*} [AddCommGroup M] [Module (ZMod r) M]
+    [AddCommGroup G] (ι : M →+ G) (hι : Function.Injective ι) {h : ℕ} (hh : (h : ZMod r) ≠ 0)
+    (Vbase Rbase : M) (spends outputs : List (ℤ × ZMod r)) (vBalance : ℤ) (bsk' : ZMod r)
+    (hne : (spends.map Prod.fst).sum - (outputs.map Prod.fst).sum - vBalance ≠ 0)
+    (hbound : ((spends.map Prod.fst).sum - (outputs.map Prod.fst).sum - vBalance).natAbs < r)
+    (hExtract8 : h • ι (bindingVK Vbase Rbase (castBundle spends) (castBundle outputs)
+      (vBalance : ZMod r)) = h • ι (bsk' • Rbase)) :
+    NontrivialRelation (F := ZMod r) Vbase Rbase :=
+  NontrivialRelation.ofBundleIntImbalance Vbase Rbase spends outputs vBalance bsk' hne hbound
+    (eq_of_nsmul_map_eq ι hι hh hExtract8)
 
 end Sapling.BindingSignature
