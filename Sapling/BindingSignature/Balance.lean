@@ -1,8 +1,10 @@
 import Mathlib.Algebra.Field.ZMod
 import Mathlib.Algebra.Module.Basic
+import Mathlib.Algebra.BigOperators.Fin
 import Mathlib.Algebra.BigOperators.Group.List.Basic
 import Mathlib.Tactic.Abel
 import Mathlib.Tactic.Ring
+import Sapling.Common.DiscreteLogRelation
 
 /-!
 # Binding-signature balance: the algebraic core
@@ -95,38 +97,54 @@ theorem smul_value_eq_smul_rand (Vbase Rbase bvk : M) (A B bsk' : F)
   have h : A • Vbase + B • Rbase = bsk' • Rbase := by rw [← hSum, hExtract]
   rw [sub_smul, ← h, add_sub_cancel_right]
 
-/-- A nontrivial linear relation between `Vbase` and `Rbase`, as data: coefficients `a`, `b`, not
-both zero, with `a • Vbase + b • Rbase = 0`.
+/-- A nontrivial linear relation between `Vbase` and `Rbase`, as data: the shared
+`Sapling.NontrivialRelation` at the two-point basis `![Vbase, Rbase]` with no generator family, so
+its coefficients are `α` (of `Vbase`) and `β` (of `Rbase`), not both zero, with
+`α • Vbase + β • Rbase = 0`.
 
 It is data rather than an `∃`: in a prime-order group such a relation always exists, so the content
 of the reduction is that an unbalanced bundle lets us *compute* one.
 
-When `a ≠ 0` it gives the discrete log `Vbase = (−b / a) • Rbase`. When `a = 0` it gives
-`b • Rbase = 0` with `b ≠ 0`, which is impossible once `Rbase ≠ 0`, as it is for Sapling's
+When `α ≠ 0` it gives the discrete log `Vbase = (−β / α) • Rbase`. When `α = 0` it gives
+`β • Rbase = 0` with `β ≠ 0`, which is impossible once `Rbase ≠ 0`, as it is for Sapling's
 generators. The reduction from a relation to a discrete-log solution is not made here. -/
-structure NontrivialRelation (F : Type*) [Field F] {M : Type*} [AddCommGroup M] [Module F M]
-    (Vbase Rbase : M) where
-  /-- The coefficient of `Vbase`. -/
-  a : F
-  /-- The coefficient of `Rbase`. -/
-  b : F
-  /-- The coefficients are not both zero. -/
-  nontrivial : a ≠ 0 ∨ b ≠ 0
-  /-- The relation itself. -/
-  relation : a • Vbase + b • Rbase = 0
+abbrev NontrivialRelation (Vbase Rbase : M) : Type _ :=
+  Sapling.NontrivialRelation (F := F) (Fin.elim0 : Fin 0 → M) ![Vbase, Rbase]
+
+/-- The relation in its two-point form: `α • Vbase + β • Rbase = 0`. -/
+theorem NontrivialRelation.relation_two {Vbase Rbase : M}
+    (rel : NontrivialRelation (F := F) Vbase Rbase) :
+    rel.α • Vbase + rel.β • Rbase = 0 := by
+  simpa [representationEval, augmentedBasis, Fintype.sum_sum_type, Fin.sum_univ_two,
+    BasisIndex.u, BasisIndex.w] using rel.relation
+
+/-- The coefficients in their two-point form are not both zero. -/
+theorem NontrivialRelation.nontrivial_two {Vbase Rbase : M}
+    (rel : NontrivialRelation (F := F) Vbase Rbase) :
+    rel.α ≠ 0 ∨ rel.β ≠ 0 := by
+  by_contra h
+  simp only [not_or, not_not] at h
+  apply rel.nontrivial
+  funext i
+  rcases i with i | j
+  · exact i.elim0
+  · fin_cases j
+    · exact h.1
+    · exact h.2
 
 /-- **Balance reduction (field level).** From `bvk = bsk' • Rbase` (`hExtract`),
 `bvk = A • Vbase + B • Rbase` (`hSum`), and `A ≠ 0`, compute the nontrivial relation with
 coefficients `(A, B − bsk')`. -/
 def NontrivialRelation.ofImbalance (Vbase Rbase bvk : M) (A B bsk' : F) (hA : A ≠ 0)
     (hExtract : bvk = bsk' • Rbase) (hSum : bvk = A • Vbase + B • Rbase) :
-    NontrivialRelation F Vbase Rbase where
-  a := A
-  b := B - bsk'
-  nontrivial := Or.inl hA
-  relation := by
-    rw [smul_value_eq_smul_rand Vbase Rbase bvk A B bsk' hExtract hSum, ← add_smul]
-    simp
+    NontrivialRelation (F := F) Vbase Rbase :=
+  Sapling.NontrivialRelation.ofParts Fin.elim0 ![A, B - bsk']
+    (Or.inr (Function.ne_iff.mpr ⟨0, by simpa using hA⟩))
+    (by
+      simp only [commitGen, Fin.sum_univ_zero, Fin.sum_univ_two, Matrix.cons_val_zero,
+        Matrix.cons_val_one, zero_add]
+      rw [smul_value_eq_smul_rand Vbase Rbase bvk A B bsk' hExtract hSum, ← add_smul]
+      simp)
 
 /-- **Bundle balance reduction (field level).** A bundle whose binding key has a known discrete
 log `bsk'` (`hExtract`, the extracted-key assumption) and whose net value is nonzero in `F` (`hne`)
@@ -136,7 +154,7 @@ def NontrivialRelation.ofBundleModImbalance (Vbase Rbase : M) (spends outputs : 
     (vBalance bsk' : F)
     (hne : (spends.map Prod.fst).sum - (outputs.map Prod.fst).sum - vBalance ≠ 0)
     (hExtract : bindingVK Vbase Rbase spends outputs vBalance = bsk' • Rbase) :
-    NontrivialRelation F Vbase Rbase :=
+    NontrivialRelation (F := F) Vbase Rbase :=
   NontrivialRelation.ofImbalance Vbase Rbase (bindingVK Vbase Rbase spends outputs vBalance) _ _
     bsk' hne hExtract (bindingVK_decomp Vbase Rbase spends outputs vBalance)
 
@@ -179,7 +197,7 @@ def NontrivialRelation.ofBundleIntImbalance {r : ℕ} [Fact (Nat.Prime r)]
     (hbound : ((spends.map Prod.fst).sum - (outputs.map Prod.fst).sum - vBalance).natAbs < r)
     (hExtract : bindingVK Vbase Rbase (castBundle spends) (castBundle outputs) (vBalance : ZMod r)
       = bsk' • Rbase) :
-    NontrivialRelation (ZMod r) Vbase Rbase :=
+    NontrivialRelation (F := ZMod r) Vbase Rbase :=
   have hne' : ((castBundle spends).map Prod.fst).sum - ((castBundle outputs).map Prod.fst).sum
       - (vBalance : ZMod r) ≠ 0 := fun hmod => by
     refine hne (intBalance_eq_zero_of_lt _ ?_ hbound)
