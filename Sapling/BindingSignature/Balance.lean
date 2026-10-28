@@ -43,9 +43,10 @@ Taken as inputs, not proved:
 * **Model of the curve**: Jubjub's prime-order subgroup is an abstract `F`-module `M` containing
   `Vbase` and `Rbase`, and the trapdoors `rcv` are scalars in `F`. Jubjub as an explicit curve, and
   the encoding of its points, are not modelled.
-* **No overflow**: the integer net value has magnitude below `r` (the `hbound` hypothesis). The
-  spec derives a stronger range (within `ValueCommitType`) from the value ranges and the
-  transaction size limit, which implies this; it is not yet proved here.
+* **No overflow**: the integer net value has magnitude below `r` (the `hbound` hypothesis), which
+  the spec's stronger range (within `ValueCommitType`) implies. The generic bound for a single list
+  of values is proved (`natAbs_lt_of_vSumBound`); the Sapling instance, which bridges spends and
+  outputs to that list and bounds their counts by the transaction size limit, is not yet.
 -/
 
 namespace Sapling.BindingSignature
@@ -206,5 +207,61 @@ def NontrivialRelation.ofBundleIntImbalance {r : ℕ} [Fact (Nat.Prime r)]
     exact hmod
   NontrivialRelation.ofBundleModImbalance Vbase Rbase (castBundle spends) (castBundle outputs)
     (vBalance : ZMod r) bsk' hne' hExtract
+
+/-! ### The generic overflow bound
+
+The generic step toward discharging the `hbound` hypothesis of
+`NontrivialRelation.ofBundleIntImbalance`: at most `N` values each with `|v| ≤ 2^64 − 1`, and a
+signed 64-bit `vBalance`, give a net value of magnitude below `r` once `vSumBound N < r`. Turning
+`hbound`'s spends and outputs into that single list of values is not done here. -/
+
+/-- If every element of a list has `|x| ≤ c`, the sum has `|∑| ≤ length · c`. -/
+theorem abs_listSum_le {l : List ℤ} {c : ℤ} (h : ∀ x ∈ l, |x| ≤ c) :
+    |l.sum| ≤ (l.length : ℤ) * c := by
+  induction l with
+  | nil => simp
+  | cons a t ih =>
+    have ha : |a| ≤ c := h a List.mem_cons_self
+    have ht : |t.sum| ≤ (t.length : ℤ) * c := ih fun x hx => h x (List.mem_cons_of_mem a hx)
+    calc |(a :: t).sum| = |a + t.sum| := by rw [List.sum_cons]
+      _ ≤ |a| + |t.sum| := abs_add_le a t.sum
+      _ ≤ c + (t.length : ℤ) * c := add_le_add ha ht
+      _ = ((a :: t).length : ℤ) * c := by rw [List.length_cons]; push_cast; ring
+
+/-- From `|x| ≤ B` and `B < r`, the magnitude `x.natAbs < r`. -/
+theorem natAbs_lt_of_abs_le {r : ℕ} {x B : ℤ} (hx : |x| ≤ B) (hr : B < (r : ℤ)) :
+    x.natAbs < r := by
+  have h : (x.natAbs : ℤ) < (r : ℤ) := by rw [← Int.abs_eq_natAbs]; exact lt_of_le_of_lt hx hr
+  exact_mod_cast h
+
+/-- The net-value magnitude bound for at most `N` values each with `|v| ≤ 2^64 − 1` and a
+balance with `|vBalance| ≤ 2^63`: `N · (2^64 − 1) + 2^63`. -/
+def vSumBound (N : ℕ) : ℤ := (N : ℤ) * (2^64 - 1) + 2^63
+
+/-- **Generic no-overflow bound.** A list `vs` of at most `N` values, each with
+`|v| ≤ 2^64 − 1`, and a balance with `|vBalance| ≤ 2^63` give `(vs.sum − vBalance).natAbs < r`
+once `vSumBound N < r`.
+
+For Sapling, `vs` will be the spend values followed by the negated output values (each still has
+`|v| ≤ 2^64 − 1`), with `N` bounding the spend and output count together.
+
+Both input bounds are looser than necessary, which is sound. `|vBalance| ≤ 2^63` admits one value
+more than the signed 64-bit range `[−2^63, 2^63 − 1]`. With `n` spends, `m` outputs and
+`n + m ≤ N`, `vSumBound N` is at least the magnitude of every value in the spec's range
+`[−m · (2^64 − 1) − 2^63 + 1, n · (2^64 − 1) + 2^63]` (§4.13 "Balance and Binding Signature
+(Sapling)"). -/
+theorem natAbs_lt_of_vSumBound {r : ℕ} (vs : List ℤ) (vBalance : ℤ) (N : ℕ)
+    (hv : ∀ v ∈ vs, |v| ≤ 2^64 - 1)
+    (hn : vs.length ≤ N)
+    (hvb : |vBalance| ≤ 2^63)
+    (hr : vSumBound N < (r : ℤ)) :
+    (vs.sum - vBalance).natAbs < r := by
+  refine natAbs_lt_of_abs_le ?_ hr
+  simp only [vSumBound]
+  have hlen : (vs.length : ℤ) ≤ (N : ℤ) := by exact_mod_cast hn
+  have hs : |vs.sum| ≤ (N : ℤ) * (2^64 - 1) :=
+    le_trans (abs_listSum_le hv) (mul_le_mul_of_nonneg_right hlen (by norm_num))
+  calc |vs.sum - vBalance| ≤ |vs.sum| + |vBalance| := abs_sub _ _
+    _ ≤ (N : ℤ) * (2^64 - 1) + 2^63 := add_le_add hs hvb
 
 end Sapling.BindingSignature
