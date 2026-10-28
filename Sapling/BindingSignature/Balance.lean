@@ -15,8 +15,9 @@ base `Vbase` and the randomness base `Rbase`.
 This is proved in two stages: for a net value nonzero in the scalar field
 (`NontrivialRelation.ofBundleModImbalance`), and for a nonzero integer net value of magnitude below
 the field order (`NontrivialRelation.ofBundleIntImbalance`). The field stage is generic over a field
-`F` acting on a group `M`; the integer stage fixes `F = ZMod r` for a prime `r`. Sapling will take
-`r = ℓ`, the order of Jubjub's prime-order subgroup (the spec's `r_𝕁`), and `M` that subgroup.
+`F` acting on a group `M`; the integer stage fixes `F = ZMod r` for a prime `r`. Sapling takes
+`r = ℓ`, the order of Jubjub's prime-order subgroup (the spec's `r_𝕁`; `jubjubScalarOrder` in
+`Sapling.BindingSignature.Sapling`), and `M` that subgroup.
 
 The argument is the last step of the balance proof in Gabizon–Hopwood, *Sapling Security
 Analysis* (2019).
@@ -41,9 +42,9 @@ Taken as inputs, not proved:
   `Vbase` and `Rbase`, and the trapdoors `rcv` are scalars in `F`. Jubjub as an explicit curve, and
   the encoding of its points, are not modelled.
 * **No overflow**: the integer net value has magnitude below `r` (the `hbound` hypothesis), which
-  the spec's stronger range (within `ValueCommitType`) implies. The generic bound for a single list
-  of values is proved (`natAbs_lt_of_vSumBound`); the Sapling instance, which bridges spends and
-  outputs to that list and bounds their counts by the transaction size limit, is not yet.
+  the spec's stronger range (within `ValueCommitType`) implies. For Sapling it is reduced to value
+  ranges, the transaction size limit and the `vBalance` encoding by `sapling_natAbs_lt_of_bytes`
+  in `Sapling.BindingSignature.Sapling`, which states those as its own assumptions.
 -/
 
 namespace Sapling.BindingSignature
@@ -206,9 +207,9 @@ def NontrivialRelation.ofBundleIntImbalance {r : ℕ} [Fact (Nat.Prime r)]
 /-! ### The generic overflow bound
 
 The generic step toward the `hbound` hypothesis of `NontrivialRelation.ofBundleIntImbalance`. For
-Sapling, the values will be the spend values followed by the negated output values (each still of
-magnitude `≤ 2^64 − 1`), with one count `N` bounding spends and outputs together; that bridge is not
-done here.
+Sapling the values are the spend values followed by the negated output values (each still of
+magnitude `≤ 2^64 − 1`), with one count `N` bounding spends and outputs together; that bridge is
+`sapling_natAbs_lt` in `Sapling.BindingSignature.Sapling`.
 
 The input bounds are looser than necessary, which is sound: `|vBalance| ≤ 2^63` admits one value
 more than the signed 64-bit range `[−2^63, 2^63 − 1]`, and with `n` spends, `m` outputs and

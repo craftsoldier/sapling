@@ -1,15 +1,35 @@
 import CompElliptic.Fields.Jubjub
+import Mathlib.Tactic.Linarith
+import Sapling.BindingSignature.Balance
 
 /-!
 # Sapling's no-overflow bound
 
-The Jubjub scalar order `ℓ` and Sapling's description counts, toward the no-overflow lift of spec
-§4.13 "Balance and Binding Signature (Sapling)". The spend and output counts come from the 2 MB
-transaction size limit and each description's minimum encoded size, summed field by field from
-the spec's encoding tables, with each result tied to the spec's stated value by an `example`.
-Version 6 transactions use the version 5 Sapling layout.
+The Sapling instance of the no-overflow lift (spec §4.13 "Balance and Binding Signature
+(Sapling)"). A bundle whose descriptions fit in one transaction has an integer net value of
+magnitude far below the Jubjub scalar order `ℓ`: about `2^77` against `2^252`. Applied to a
+bundle's spend and output values at `r = ℓ`, `sapling_natAbs_lt_of_bytes` gives exactly the
+`hbound` hypothesis of `NontrivialRelation.ofBundleIntImbalance`; the `example` at the end of this
+module checks that composition.
+
+The spend and output counts come from the 2 MB transaction size limit and each description's
+minimum encoded size, summed field by field from the spec's encoding tables, with each result tied
+to the spec's stated value by an `example`. Version 6 transactions use the version 5 Sapling layout.
 
 Section numbers refer to the NU6.3 edition of the Zcash protocol specification.
+
+## Assumptions
+
+Taken as inputs, not proved:
+
+* **Value ranges**: every spend and output value is in `[0, 2^64 − 1]` (`hOld`, `hNew`). The spend
+  and output circuits enforce this for the values they commit to. Note values are also at most
+  `MAX_MONEY`, a smaller bound, but the circuits check only 64 bits, the range §4.13 uses.
+* **Encoding sizes**: the spends and outputs fit in one transaction of at most `maxTxBytes` bytes
+  (`hSpend`, `hOutput`), a consensus limit together with the transaction encoding.
+* **Balance range**: `|vBalance| ≤ 2^63` (`hvBalance`), implied by its encoding as a signed 64-bit
+  integer, the range §4.13 uses. Consensus restricts it further, to `[−MAX_MONEY, MAX_MONEY]`
+  (§7.1.2 "Transaction Consensus Rules"); that is not needed here.
 -/
 
 namespace Sapling.BindingSignature
@@ -95,5 +115,96 @@ theorem sapling_output_count (m : ℕ) (h : saplingOutputBytes * m ≤ maxTxByte
     m ≤ saplingMaxOutputs := by
   simp only [saplingOutputBytes, saplingMaxOutputs, maxTxBytes] at h ⊢
   omega
+
+/-! ### The bound
+
+Bounding spends and outputs separately is looser than the joint limit
+`352 · n + 948 · m ≤ maxTxBytes`, and the resulting symmetric bound on the net value is looser than
+the spec's asymmetric range for it; both only enlarge the bound, which is sound. From NU5 onward a
+separate consensus rule also caps each count below `2^16`, in every transaction version (§7.1.2
+"Transaction Consensus Rules"); it is not used here, because it does not hold for transactions
+mined before NU5. -/
+
+/-- The Sapling net-value magnitude bound, `vSumBound (saplingMaxSpends + saplingMaxOutputs)`. -/
+def saplingVSumBound : ℤ := vSumBound (saplingMaxSpends + saplingMaxOutputs)
+
+/-- `saplingVSumBound` in closed form: `(5681 + 2109) · (2^64 − 1) + 2^63`. -/
+theorem saplingVSumBound_eq : saplingVSumBound = (5681 + 2109) * (2^64 - 1) + 2^63 := by
+  simp only [saplingVSumBound, vSumBound, show saplingMaxSpends = 5681 from rfl,
+    show saplingMaxOutputs = 2109 from rfl]
+  norm_num
+
+/-- The range §4.13 states for the net value in a version 5 transaction,
+`[−38913406623490299131842, 104805176454780817500623]`, lies within `saplingVSumBound`. -/
+example : (104805176454780817500623 : ℤ) ≤ saplingVSumBound ∧
+    (38913406623490299131842 : ℤ) ≤ saplingVSumBound := by
+  rw [saplingVSumBound_eq]; norm_num
+
+/-- **Sapling no-overflow bound.** Spend values `olds` and output values `news`, each in
+`[0, 2^64 − 1]`, at most `saplingMaxSpends` and `saplingMaxOutputs` of them, and
+`|vBalance| ≤ 2^63`, give `(olds.sum − news.sum − vBalance).natAbs < r` once
+`saplingVSumBound < r`. The spends followed by the negated outputs form one list of values of
+magnitude `≤ 2^64 − 1`, to which `natAbs_lt_of_vSumBound` applies. -/
+theorem sapling_natAbs_lt {r : ℕ} (olds news : List ℤ) (vBalance : ℤ)
+    (hOld : ∀ v ∈ olds, 0 ≤ v ∧ v ≤ 2^64 - 1)
+    (hNew : ∀ v ∈ news, 0 ≤ v ∧ v ≤ 2^64 - 1)
+    (hnOld : olds.length ≤ saplingMaxSpends)
+    (hnNew : news.length ≤ saplingMaxOutputs)
+    (hvBalance : |vBalance| ≤ 2^63)
+    (hr : saplingVSumBound < (r : ℤ)) :
+    (olds.sum - news.sum - vBalance).natAbs < r := by
+  have hmapneg : (news.map Neg.neg).sum = -news.sum := by simp [List.sum_neg]
+  have hv : ∀ v ∈ olds ++ news.map Neg.neg, |v| ≤ 2^64 - 1 := by
+    intro v hv
+    rcases List.mem_append.mp hv with h | h
+    · exact abs_le.mpr ⟨by linarith [(hOld v h).1, show (0:ℤ) ≤ 2^64 - 1 by norm_num], (hOld v h).2⟩
+    · obtain ⟨w, hw, rfl⟩ := List.mem_map.mp h
+      exact abs_le.mpr
+        ⟨by linarith [(hNew w hw).2],
+          by linarith [(hNew w hw).1, show (0:ℤ) ≤ 2^64 - 1 by norm_num]⟩
+  have hlen : (olds ++ news.map Neg.neg).length ≤ saplingMaxSpends + saplingMaxOutputs := by
+    rw [List.length_append, List.length_map]; exact Nat.add_le_add hnOld hnNew
+  have key := natAbs_lt_of_vSumBound (olds ++ news.map Neg.neg) vBalance
+    (saplingMaxSpends + saplingMaxOutputs) hv hlen hvBalance hr
+  rwa [List.sum_append, hmapneg, ← sub_eq_add_neg] at key
+
+/-- **Sapling no-overflow bound from byte budgets.** As `sapling_natAbs_lt`, with the counts
+derived from the descriptions fitting in `maxTxBytes`. -/
+theorem sapling_natAbs_lt_of_bytes {r : ℕ} (olds news : List ℤ) (vBalance : ℤ)
+    (hOld : ∀ v ∈ olds, 0 ≤ v ∧ v ≤ 2^64 - 1)
+    (hNew : ∀ v ∈ news, 0 ≤ v ∧ v ≤ 2^64 - 1)
+    (hSpend : saplingMinSpendBytes * olds.length ≤ maxTxBytes)
+    (hOutput : saplingOutputBytes * news.length ≤ maxTxBytes)
+    (hvBalance : |vBalance| ≤ 2^63)
+    (hr : saplingVSumBound < (r : ℤ)) :
+    (olds.sum - news.sum - vBalance).natAbs < r :=
+  sapling_natAbs_lt olds news vBalance hOld hNew
+    (sapling_spend_count _ hSpend) (sapling_output_count _ hOutput) hvBalance hr
+
+/-- The bound fits the Jubjub scalar field: `saplingVSumBound < ℓ`, the `hr` that instantiates the
+bounds above at `r = ℓ`. -/
+theorem saplingVSumBound_lt_jubjubScalarOrder : saplingVSumBound < (jubjubScalarOrder : ℤ) := by
+  rw [saplingVSumBound_eq]; norm_num [jubjubScalarOrder]
+
+/-- The bound composes with the integer-level reduction at `r = ℓ`: on a bundle's spend and output
+values, `sapling_natAbs_lt_of_bytes` supplies the `hbound` of
+`NontrivialRelation.ofBundleIntImbalance` exactly. -/
+example {M : Type*} [AddCommGroup M] [Module (ZMod jubjubScalarOrder) M]
+    (Vbase Rbase : M) (spends outputs : List (ℤ × ZMod jubjubScalarOrder)) (vBalance : ℤ)
+    (bsk' : ZMod jubjubScalarOrder)
+    (hOld : ∀ v ∈ spends.map Prod.fst, 0 ≤ v ∧ v ≤ 2^64 - 1)
+    (hNew : ∀ v ∈ outputs.map Prod.fst, 0 ≤ v ∧ v ≤ 2^64 - 1)
+    (hSpend : saplingMinSpendBytes * spends.length ≤ maxTxBytes)
+    (hOutput : saplingOutputBytes * outputs.length ≤ maxTxBytes)
+    (hvBalance : |vBalance| ≤ 2^63)
+    (hne : (spends.map Prod.fst).sum - (outputs.map Prod.fst).sum - vBalance ≠ 0)
+    (hExtract : bindingVK Vbase Rbase (castBundle spends) (castBundle outputs)
+      (vBalance : ZMod jubjubScalarOrder) = bsk' • Rbase) :
+    NontrivialRelation (F := ZMod jubjubScalarOrder) Vbase Rbase :=
+  NontrivialRelation.ofBundleIntImbalance Vbase Rbase spends outputs vBalance bsk' hne
+    (sapling_natAbs_lt_of_bytes (spends.map Prod.fst) (outputs.map Prod.fst) vBalance hOld hNew
+      (by simpa using hSpend) (by simpa using hOutput) hvBalance
+      saplingVSumBound_lt_jubjubScalarOrder)
+    hExtract
 
 end Sapling.BindingSignature
