@@ -18,7 +18,8 @@ the field order (`NontrivialRelation.ofBundleIntImbalance`). The field stage is 
 `F` acting on a group `M`; the integer stage fixes `F = ZMod r` for a prime `r`. Sapling takes
 `r = ℓ`, the order of Jubjub's prime-order subgroup (the spec's `r_𝕁`; `jubjubScalarOrder` in
 `Sapling.BindingSignature.Sapling`), and `M` that subgroup. On the full curve, `verifierBVK` is the
-key as the verifier computes it, and `verifierBVK_of_openings` relates it to `bindingVK`.
+key as the verifier computes it, and `verifierBVK_of_openings` relates it to `bindingVK`. The final
+reduction, on the verifier's key, is `NontrivialRelation.ofSaplingBundle` in that module.
 
 The argument is the last step of the balance proof in Gabizon–Hopwood, *Sapling Security
 Analysis* (2019).
@@ -36,8 +37,9 @@ Taken as inputs, not proved:
   `Rbase` generates a prime-order `M`, as in Sapling, such a `bsk'` always exists; what the
   assumption supplies is the key itself, so that the relation built from it is computed. Deployed
   verification is cofactored, so extraction gives only `[8] • bvk = [8] • (bsk' • Rbase)`;
-  `§ Cofactored extraction` below derives the exact form from it. Obtaining the cofactored form by
-  straight-line extraction in the algebraic group model needs two things this model does not
+  `eq_of_nsmul_map_eq` (`§ Cofactored extraction` below) cancels the `8`, and
+  `NontrivialRelation.ofSaplingBundle` derives the exact form from it. Obtaining the cofactored form
+  by straight-line extraction in the algebraic group model needs two things this model does not
   provide: the fact that `[8]` maps the whole curve into the prime-order subgroup, and an adversary
   whose point representations may use the small-order points.
 * **Value-commitment openings**: each spend and output comes with its opening `(v, rcv)`, which the
@@ -287,19 +289,6 @@ theorem eq_of_nsmul_map_eq {G : Type*} [AddCommGroup G] (ι : M →+ G)
     rw [Nat.cast_smul_eq_nsmul, Nat.cast_smul_eq_nsmul]; exact hι hxy
   have := congrArg ((h : F)⁻¹ • ·) hM
   simpa only [smul_smul, inv_mul_cancel₀ hh, one_smul] using this
-
-/-- The cofactored extraction `hExtract8` yields the exact `hExtract` of
-`NontrivialRelation.ofBundleIntImbalance` through `eq_of_nsmul_map_eq`. -/
-example {r : ℕ} [Fact (Nat.Prime r)] {M G : Type*} [AddCommGroup M] [Module (ZMod r) M]
-    [AddCommGroup G] (ι : M →+ G) (hι : Function.Injective ι) {h : ℕ} (hh : (h : ZMod r) ≠ 0)
-    (Vbase Rbase : M) (spends outputs : List (ℤ × ZMod r)) (vBalance : ℤ) (bsk' : ZMod r)
-    (hne : (spends.map Prod.fst).sum - (outputs.map Prod.fst).sum - vBalance ≠ 0)
-    (hbound : ((spends.map Prod.fst).sum - (outputs.map Prod.fst).sum - vBalance).natAbs < r)
-    (hExtract8 : h • ι (bindingVK Vbase Rbase (castBundle spends) (castBundle outputs)
-      (vBalance : ZMod r)) = h • ι (bsk' • Rbase)) :
-    NontrivialRelation (F := ZMod r) Vbase Rbase :=
-  NontrivialRelation.ofBundleIntImbalance Vbase Rbase spends outputs vBalance bsk' hne hbound
-    (eq_of_nsmul_map_eq ι hι hh hExtract8)
 
 /-! ### The verifier's binding key
 

@@ -10,9 +10,12 @@ The Sapling instance of the no-overflow lift (spec §4.13 "Balance and Binding S
 magnitude far below the Jubjub scalar order `ℓ`: about `2^77` against `2^252`. Applied to a
 bundle's spend and output values at `r = ℓ`, `sapling_natAbs_lt_of_bytes` gives exactly the
 `hbound` hypothesis of `NontrivialRelation.ofBundleIntImbalance`, and
-`NontrivialRelation.ofSaplingImbalance` composes the two, taking the key in its exact form; an
-`example` after it checks that its hypotheses can hold together. `eight_ne_zero_jubjub` records
-that Jubjub's cofactor `8` is nonzero mod `ℓ`.
+`NontrivialRelation.ofSaplingImbalance` composes the two, taking the key in its exact form.
+`NontrivialRelation.ofSaplingBundle` takes instead the commitments the transaction carries and the
+cofactored equation on the verifier's key, and derives the exact form through
+`verifierBVK_of_openings` and `eq_of_nsmul_map_eq`, with `eight_ne_zero_jubjub` supplying that
+Jubjub's cofactor `8` is nonzero mod `ℓ`. An `example` after each checks that its hypotheses can
+hold together.
 
 The spend and output counts come from the 2 MB transaction size limit and each description's
 minimum encoded size, summed field by field from the spec's encoding tables, with each result tied
@@ -25,9 +28,11 @@ Section numbers refer to the NU6.3 edition of the Zcash protocol specification.
 Taken as inputs, not proved:
 
 * **Extracted key, value-commitment openings, model of the curve**:
-  `NontrivialRelation.ofSaplingImbalance` takes the key `bsk'` (`hExtract`), the openings `spends`
-  and `outputs`, and an abstract module `M`, as described in the Assumptions of
-  `Sapling.BindingSignature.Balance`.
+  `NontrivialRelation.ofSaplingBundle` takes a key `bsk'` satisfying the cofactored equation
+  (`hExtract8`), the openings `spends` and `outputs` of the commitments `cvIn` and `cvOut` (`hcvIn`,
+  `hcvOut`), an abstract module `M`, and an injective `ι : M →+ G` into an abstract group `G`, as
+  described in the Assumptions of `Sapling.BindingSignature.Balance`.
+  `NontrivialRelation.ofSaplingImbalance` takes the key in its exact form (`hExtract`).
 * **Value ranges**: every spend and output value is in `[0, 2^64 − 1]` (`hOld`, `hNew`). The spend
   and output circuits enforce this for the values they commit to. Each note's value is also at
   most `MAX_MONEY`, a smaller bound, but the circuits check only 64 bits, the range §4.13 uses.
@@ -204,8 +209,8 @@ theorem saplingVSumBound_lt_jubjubScalarOrder : saplingVSumBound < (jubjubScalar
 `|vBalance| ≤ 2^63` (`hvBalance`), a nonzero integer net value (`hne`), and a key `bsk'` with
 `bindingVK … = bsk' • Rbase` (`hExtract`), yields a nontrivial relation between `Vbase` and `Rbase`.
 It is `NontrivialRelation.ofBundleIntImbalance` at `r = ℓ`, with `hbound` from
-`sapling_natAbs_lt_of_bytes`. `hExtract` is the exact form in `M`, not the cofactored equation on
-the full curve that extraction from deployed verification gives. -/
+`sapling_natAbs_lt_of_bytes`. `hExtract` is the exact form; `NontrivialRelation.ofSaplingBundle`
+takes the cofactored one on the full curve, which extraction from deployed verification gives. -/
 def NontrivialRelation.ofSaplingImbalance {M : Type*} [AddCommGroup M]
     [Module (ZMod jubjubScalarOrder) M]
     (Vbase Rbase : M) (spends outputs : List (ℤ × ZMod jubjubScalarOrder)) (vBalance : ℤ)
@@ -232,6 +237,43 @@ example :
     let rel := NontrivialRelation.ofSaplingImbalance (1 : ZMod jubjubScalarOrder) 1 [(1, 0)] [] 0 1
       (by decide) (by simp) (by simp) (by decide) (by decide) (by norm_num)
       (by simp [bindingVK, castBundle, valueCommit])
+    rel.α = 1 ∧ rel.β = -1 :=
+  ⟨rfl, rfl⟩
+
+/-- A Sapling bundle with nonzero integer net value (`hne`), whose key as the verifier computes it
+satisfies the cofactored `8 • verifierBVK … = 8 • ι (bsk' • Rbase)` (`hExtract8`), yields a
+nontrivial relation between `Vbase` and `Rbase`, given the ranges and byte budgets of
+`NontrivialRelation.ofSaplingImbalance` (`hOld`, `hNew`, `hSpend`, `hOutput`, `hvBalance`). The
+openings (`hcvIn`, `hcvOut`) put that key in the image of the injective `ι`, where `8` cancels. -/
+def NontrivialRelation.ofSaplingBundle {M G : Type*} [AddCommGroup M]
+    [Module (ZMod jubjubScalarOrder) M] [AddCommGroup G] (ι : M →+ G) (hι : Function.Injective ι)
+    (Vbase Rbase : M) (spends outputs : List (ℤ × ZMod jubjubScalarOrder)) (cvIn cvOut : List G)
+    (vBalance : ℤ) (bsk' : ZMod jubjubScalarOrder)
+    (hcvIn : cvIn = spends.map fun p =>
+      ι (valueCommit Vbase Rbase (p.1 : ZMod jubjubScalarOrder) p.2))
+    (hcvOut : cvOut = outputs.map fun p =>
+      ι (valueCommit Vbase Rbase (p.1 : ZMod jubjubScalarOrder) p.2))
+    (hne : (spends.map Prod.fst).sum - (outputs.map Prod.fst).sum - vBalance ≠ 0)
+    (hOld : ∀ v ∈ spends.map Prod.fst, 0 ≤ v ∧ v ≤ 2^64 - 1)
+    (hNew : ∀ v ∈ outputs.map Prod.fst, 0 ≤ v ∧ v ≤ 2^64 - 1)
+    (hSpend : saplingMinSpendBytes * spends.length ≤ maxTxBytes)
+    (hOutput : saplingOutputBytes * outputs.length ≤ maxTxBytes)
+    (hvBalance : |vBalance| ≤ 2^63)
+    (hExtract8 : 8 • verifierBVK (ι Vbase) cvIn cvOut vBalance = 8 • ι (bsk' • Rbase)) :
+    NontrivialRelation (F := ZMod jubjubScalarOrder) Vbase Rbase :=
+  NontrivialRelation.ofSaplingImbalance Vbase Rbase spends outputs vBalance bsk' hne hOld hNew
+    hSpend hOutput hvBalance (eq_of_nsmul_map_eq ι hι eight_ne_zero_jubjub (by
+      subst hcvIn hcvOut; rwa [verifierBVK_of_openings] at hExtract8))
+
+/-- The hypotheses of `NontrivialRelation.ofSaplingBundle` hold together: with `M = G = ZMod ℓ`
+and `ι` the identity, `Vbase = Rbase = 1`, one spend of value `1` committed as `1`, no outputs,
+`vBalance = 0` and `bsk' = 1`, it returns the relation with coefficients `(1, −1)`. This shows
+non-vacuity only, nothing about Jubjub. -/
+example :
+    let rel := NontrivialRelation.ofSaplingBundle (AddMonoidHom.id (ZMod jubjubScalarOrder))
+      Function.injective_id 1 1 [(1, 0)] [] [1] [] 0 1
+      (by simp [valueCommit]) rfl (by decide) (by simp) (by simp) (by decide) (by decide)
+      (by norm_num) (by simp [verifierBVK])
     rel.α = 1 ∧ rel.β = -1 :=
   ⟨rfl, rfl⟩
 
