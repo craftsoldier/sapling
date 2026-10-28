@@ -17,7 +17,8 @@ This is proved in two stages: for a net value nonzero in the scalar field
 the field order (`NontrivialRelation.ofBundleIntImbalance`). The field stage is generic over a field
 `F` acting on a group `M`; the integer stage fixes `F = ZMod r` for a prime `r`. Sapling takes
 `r = ℓ`, the order of Jubjub's prime-order subgroup (the spec's `r_𝕁`; `jubjubScalarOrder` in
-`Sapling.BindingSignature.Sapling`), and `M` that subgroup.
+`Sapling.BindingSignature.Sapling`), and `M` that subgroup. On the full curve, `verifierBVK` is the
+key as the verifier computes it, and `verifierBVK_of_openings` relates it to `bindingVK`.
 
 The argument is the last step of the balance proof in Gabizon–Hopwood, *Sapling Security
 Analysis* (2019).
@@ -44,7 +45,8 @@ Taken as inputs, not proved:
 * **Model of the curve**: Jubjub's prime-order subgroup is an abstract `F`-module `M` containing
   `Vbase` and `Rbase`, and the trapdoors `rcv` are scalars in `F`. Jubjub as an explicit curve, and
   the encoding of its points, are not modelled. The full curve, where it appears
-  (`§ Cofactored extraction`), is an abstract group `G` into which `M` embeds injectively.
+  (`§ Cofactored extraction`, `§ The verifier's binding key`), is an abstract group `G` with a
+  homomorphism `ι : M →+ G`, injective where the cofactor is cancelled.
 * **No overflow**: the integer net value has magnitude below `r` (the `hbound` hypothesis), which
   the spec's stronger range (within `ValueCommitType`) implies. For Sapling it is reduced to value
   ranges, the transaction size limit and the `vBalance` encoding by `sapling_natAbs_lt_of_bytes`
@@ -270,8 +272,9 @@ subgroup and extraction yields `bsk'` only with `[8] • bvk = [8] • (bsk' •
 fact about Jubjub, not part of the model here. The `8` cancels for `bvk` in the prime-order
 subgroup. Value commitments are points of the full curve (§4.1.8 "Commitment"), and the consensus
 checks on the point itself reject only invalid encodings and small order (§4.4 "Spend Descriptions",
-§4.5 "Output Descriptions"), so that membership comes from the value-commitment openings, and so
-rests on the Spend and Output circuits binding each `cv` to its opening. -/
+§4.5 "Output Descriptions"), so that membership comes from the value-commitment openings:
+`verifierBVK_of_openings` below shows that the verifier's key is then the image of `bindingVK`. It
+therefore rests on the Spend and Output circuits binding each `cv` to its opening. -/
 
 /-- Cofactor cancellation: `h • ι x = h • ι y` gives `x = y` when `ι : M →+ G` is injective and `h`
 is nonzero in `F`. For Sapling, `M` is Jubjub's prime-order subgroup, `G` the full curve and
@@ -297,5 +300,33 @@ example {r : ℕ} [Fact (Nat.Prime r)] {M G : Type*} [AddCommGroup M] [Module (Z
     NontrivialRelation (F := ZMod r) Vbase Rbase :=
   NontrivialRelation.ofBundleIntImbalance Vbase Rbase spends outputs vBalance bsk' hne hbound
     (eq_of_nsmul_map_eq ι hι hh hExtract8)
+
+/-! ### The verifier's binding key
+
+The key as the verifier computes it on the full curve, and its relation to `bindingVK` on the
+openings. -/
+
+/-- The binding verification key as the verifier computes it on the full curve `G`, from the spend
+and output commitments the transaction carries and the value base `Vpt`. §4.13 defines it as the
+sum of the spend commitments, minus the sum of the output commitments, minus
+`ValueCommit₀(vBalance)`, whose value is `vBalance • Vpt` because its trapdoor is `0` (§5.4.8.3
+"Homomorphic Pedersen commitments (Sapling and Orchard)"). The points are taken already decoded. -/
+def verifierBVK {G : Type*} [AddCommGroup G] (Vpt : G) (cvIn cvOut : List G) (vBalance : ℤ) : G :=
+  cvIn.sum - cvOut.sum - vBalance • Vpt
+
+/-- When each commitment is `ι` of the value commitment to its opening, the verifier's key is `ι`
+of `bindingVK` on those openings. With `M` modelling the prime-order subgroup, the key therefore
+lies in that subgroup's image. -/
+theorem verifierBVK_of_openings {r : ℕ} [Fact (Nat.Prime r)] {M G : Type*} [AddCommGroup M]
+    [Module (ZMod r) M] [AddCommGroup G] (ι : M →+ G) (Vbase Rbase : M)
+    (spends outputs : List (ℤ × ZMod r)) (vBalance : ℤ) :
+    verifierBVK (ι Vbase)
+        (spends.map fun p => ι (valueCommit Vbase Rbase (p.1 : ZMod r) p.2))
+        (outputs.map fun p => ι (valueCommit Vbase Rbase (p.1 : ZMod r) p.2)) vBalance
+      = ι (bindingVK Vbase Rbase (castBundle spends) (castBundle outputs) (vBalance : ZMod r)) := by
+  -- `bindingVK` takes `vBalance` mod `r` and the verifier takes the integer; Mathlib's
+  -- `map_intCast_smul` moves the cast through `ι`.
+  simp only [verifierBVK, bindingVK, castBundle, map_sub, map_list_sum, List.map_map,
+    Function.comp_def, _root_.map_intCast_smul ι (ZMod r) ℤ, Int.cast_id]
 
 end Sapling.BindingSignature

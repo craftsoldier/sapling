@@ -3,14 +3,16 @@ import Mathlib.Tactic.Linarith
 import Sapling.BindingSignature.Balance
 
 /-!
-# Sapling's no-overflow bound
+# Sapling's no-overflow bound and balance reduction
 
 The Sapling instance of the no-overflow lift (spec §4.13 "Balance and Binding Signature
 (Sapling)"). A bundle whose descriptions fit in one transaction has an integer net value of
 magnitude far below the Jubjub scalar order `ℓ`: about `2^77` against `2^252`. Applied to a
 bundle's spend and output values at `r = ℓ`, `sapling_natAbs_lt_of_bytes` gives exactly the
-`hbound` hypothesis of `NontrivialRelation.ofBundleIntImbalance`; the `example` at the end of this
-module checks that composition.
+`hbound` hypothesis of `NontrivialRelation.ofBundleIntImbalance`, and
+`NontrivialRelation.ofSaplingImbalance` composes the two, taking the key in its exact form; an
+`example` after it checks that its hypotheses can hold together. `eight_ne_zero_jubjub` records
+that Jubjub's cofactor `8` is nonzero mod `ℓ`.
 
 The spend and output counts come from the 2 MB transaction size limit and each description's
 minimum encoded size, summed field by field from the spec's encoding tables, with each result tied
@@ -22,9 +24,13 @@ Section numbers refer to the NU6.3 edition of the Zcash protocol specification.
 
 Taken as inputs, not proved:
 
+* **Extracted key, value-commitment openings, model of the curve**:
+  `NontrivialRelation.ofSaplingImbalance` takes the key `bsk'` (`hExtract`), the openings `spends`
+  and `outputs`, and an abstract module `M`, as described in the Assumptions of
+  `Sapling.BindingSignature.Balance`.
 * **Value ranges**: every spend and output value is in `[0, 2^64 − 1]` (`hOld`, `hNew`). The spend
-  and output circuits enforce this for the values they commit to. Note values are also at most
-  `MAX_MONEY`, a smaller bound, but the circuits check only 64 bits, the range §4.13 uses.
+  and output circuits enforce this for the values they commit to. Each note's value is also at
+  most `MAX_MONEY`, a smaller bound, but the circuits check only 64 bits, the range §4.13 uses.
 * **Encoding sizes**: the spends and outputs fit in one transaction of at most `maxTxBytes` bytes
   (`hSpend`, `hOutput`), a consensus limit together with the transaction encoding.
 * **Balance range**: `|vBalance| ≤ 2^63` (`hvBalance`), implied by its encoding as a signed 64-bit
@@ -44,6 +50,9 @@ example : jubjubScalarOrder =
 
 /-- `ℓ` is prime, by CompElliptic's Pratt certificate. -/
 example : Fact (Nat.Prime jubjubScalarOrder) := inferInstance
+
+/-- Jubjub's cofactor `8` is nonzero mod `ℓ`, so `eq_of_nsmul_map_eq` can cancel it. -/
+theorem eight_ne_zero_jubjub : (8 : ZMod jubjubScalarOrder) ≠ 0 := by decide
 
 /-! ### Description sizes and counts -/
 
@@ -168,8 +177,10 @@ theorem sapling_natAbs_lt {r : ℕ} (olds news : List ℤ) (vBalance : ℤ)
     (saplingMaxSpends + saplingMaxOutputs) hv hlen hvBalance hr
   rwa [List.sum_append, hmapneg, ← sub_eq_add_neg] at key
 
-/-- **Sapling no-overflow bound from byte budgets.** As `sapling_natAbs_lt`, with the counts
-derived from the descriptions fitting in `maxTxBytes`. -/
+/-- The Sapling no-overflow bound from byte budgets: with the value and balance ranges of
+`sapling_natAbs_lt`, spends and outputs that fit in `maxTxBytes` give
+`(olds.sum − news.sum − vBalance).natAbs < r` once `saplingVSumBound < r`. The counts come from
+`sapling_spend_count` and `sapling_output_count`. -/
 theorem sapling_natAbs_lt_of_bytes {r : ℕ} (olds news : List ℤ) (vBalance : ℤ)
     (hOld : ∀ v ∈ olds, 0 ≤ v ∧ v ≤ 2^64 - 1)
     (hNew : ∀ v ∈ news, 0 ≤ v ∧ v ≤ 2^64 - 1)
@@ -186,25 +197,42 @@ bounds above at `r = ℓ`. -/
 theorem saplingVSumBound_lt_jubjubScalarOrder : saplingVSumBound < (jubjubScalarOrder : ℤ) := by
   rw [saplingVSumBound_eq]; norm_num [jubjubScalarOrder]
 
-/-- The bound composes with the integer-level reduction at `r = ℓ`: on a bundle's spend and output
-values, `sapling_natAbs_lt_of_bytes` supplies the `hbound` of
-`NontrivialRelation.ofBundleIntImbalance` exactly. -/
-example {M : Type*} [AddCommGroup M] [Module (ZMod jubjubScalarOrder) M]
+/-! ### The Sapling reduction -/
+
+/-- **Sapling balance reduction (integer level).** A bundle whose spend and output values lie in
+`[0, 2^64 − 1]` (`hOld`, `hNew`) and fit the byte budgets (`hSpend`, `hOutput`), with
+`|vBalance| ≤ 2^63` (`hvBalance`), a nonzero integer net value (`hne`), and a key `bsk'` with
+`bindingVK … = bsk' • Rbase` (`hExtract`), yields a nontrivial relation between `Vbase` and `Rbase`.
+It is `NontrivialRelation.ofBundleIntImbalance` at `r = ℓ`, with `hbound` from
+`sapling_natAbs_lt_of_bytes`. `hExtract` is the exact form in `M`, not the cofactored equation on
+the full curve that extraction from deployed verification gives. -/
+def NontrivialRelation.ofSaplingImbalance {M : Type*} [AddCommGroup M]
+    [Module (ZMod jubjubScalarOrder) M]
     (Vbase Rbase : M) (spends outputs : List (ℤ × ZMod jubjubScalarOrder)) (vBalance : ℤ)
     (bsk' : ZMod jubjubScalarOrder)
+    (hne : (spends.map Prod.fst).sum - (outputs.map Prod.fst).sum - vBalance ≠ 0)
     (hOld : ∀ v ∈ spends.map Prod.fst, 0 ≤ v ∧ v ≤ 2^64 - 1)
     (hNew : ∀ v ∈ outputs.map Prod.fst, 0 ≤ v ∧ v ≤ 2^64 - 1)
     (hSpend : saplingMinSpendBytes * spends.length ≤ maxTxBytes)
     (hOutput : saplingOutputBytes * outputs.length ≤ maxTxBytes)
     (hvBalance : |vBalance| ≤ 2^63)
-    (hne : (spends.map Prod.fst).sum - (outputs.map Prod.fst).sum - vBalance ≠ 0)
     (hExtract : bindingVK Vbase Rbase (castBundle spends) (castBundle outputs)
       (vBalance : ZMod jubjubScalarOrder) = bsk' • Rbase) :
     NontrivialRelation (F := ZMod jubjubScalarOrder) Vbase Rbase :=
   NontrivialRelation.ofBundleIntImbalance Vbase Rbase spends outputs vBalance bsk' hne
     (sapling_natAbs_lt_of_bytes (spends.map Prod.fst) (outputs.map Prod.fst) vBalance hOld hNew
-      (by simpa using hSpend) (by simpa using hOutput) hvBalance
+      (by rwa [List.length_map]) (by rwa [List.length_map]) hvBalance
       saplingVSumBound_lt_jubjubScalarOrder)
     hExtract
+
+/-- The hypotheses of `NontrivialRelation.ofSaplingImbalance` hold together: in `ZMod ℓ` with
+`Vbase = Rbase = 1`, one spend of value `1`, no outputs, `vBalance = 0` and `bsk' = 1`, it returns
+the relation with coefficients `(1, −1)`. This shows non-vacuity only, nothing about Jubjub. -/
+example :
+    let rel := NontrivialRelation.ofSaplingImbalance (1 : ZMod jubjubScalarOrder) 1 [(1, 0)] [] 0 1
+      (by decide) (by simp) (by simp) (by decide) (by decide) (by norm_num)
+      (by simp [bindingVK, castBundle, valueCommit])
+    rel.α = 1 ∧ rel.β = -1 :=
+  ⟨rfl, rfl⟩
 
 end Sapling.BindingSignature
