@@ -1,4 +1,3 @@
-import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 import Mathlib.Algebra.Field.Defs
 import Mathlib.Algebra.Module.Defs
 import Mathlib.Data.Fintype.BigOperators
@@ -8,8 +7,8 @@ import Mathlib.Data.Fintype.BigOperators
 
 A nontrivial `F`-linear relation among a family of group elements, carried as *data* (the
 coefficients) so that a reduction can compute it rather than merely assert that it exists. In a
-prime-order group such a relation always exists, so an `∃`-closed `Prop` would be vacuous; the
-content of a reduction is that it produces one.
+prime-order group any two or more elements satisfy such a relation, so an `∃`-closed `Prop` would
+be vacuous there; the content of a reduction is that it produces one.
 
 `AlgebraicRelationWitness` is the underlying type: a nonzero coefficient vector over a finite index
 whose combination of the basis is zero. A commitment scheme presents a generator family `g`

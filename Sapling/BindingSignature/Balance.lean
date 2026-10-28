@@ -1,7 +1,5 @@
 import Mathlib.Algebra.Field.ZMod
-import Mathlib.Algebra.Module.Basic
 import Mathlib.Algebra.BigOperators.Fin
-import Mathlib.Algebra.BigOperators.Group.List.Basic
 import Mathlib.Tactic.Abel
 import Mathlib.Tactic.Ring
 import Sapling.Common.DiscreteLogRelation
@@ -9,17 +7,16 @@ import Sapling.Common.DiscreteLogRelation
 /-!
 # Binding-signature balance: the algebraic core
 
-The algebraic heart of the Sapling balance argument (Zcash protocol specification §4.13 "Balance
-and Binding Signature (Sapling)"): a bundle whose binding key `bvk` has a known discrete log `bsk'`
-(as RedJubjub extractability provides from a verifying binding signature) and whose net value is
-nonzero yields an explicit nontrivial linear relation between the value base `Vbase` and the
-randomness base `Rbase`. This is proved in two stages: for a net value nonzero in the scalar field
-(`NontrivialRelation.ofBundleModImbalance`), and for a nonzero integer net value whose magnitude is
-below the field order (`NontrivialRelation.ofBundleIntImbalance`).
+The algebraic core of the Sapling balance argument (Zcash protocol specification §4.13 "Balance
+and Binding Signature (Sapling)"). A bundle whose net value is nonzero, and whose binding key `bvk`
+has a known discrete log `bsk'`, yields an explicit nontrivial linear relation between the value
+base `Vbase` and the randomness base `Rbase`.
 
-The field stage is generic over a field `F` acting on a group `M`; the integer stage fixes
-`F = ZMod r` for a prime `r`. Sapling takes `r = ℓ` (the spec's `r_𝕁`) and `M` the Jubjub
-prime-order subgroup.
+This is proved in two stages: for a net value nonzero in the scalar field
+(`NontrivialRelation.ofBundleModImbalance`), and for a nonzero integer net value of magnitude below
+the field order (`NontrivialRelation.ofBundleIntImbalance`). The field stage is generic over a field
+`F` acting on a group `M`; the integer stage fixes `F = ZMod r` for a prime `r`. Sapling will take
+`r = ℓ`, the order of Jubjub's prime-order subgroup (the spec's `r_𝕁`), and `M` that subgroup.
 
 The argument is the last step of the balance proof in Gabizon–Hopwood, *Sapling Security
 Analysis* (2019).
@@ -99,20 +96,18 @@ theorem smul_value_eq_smul_rand (Vbase Rbase bvk : M) (A B bsk' : F)
   rw [sub_smul, ← h, add_sub_cancel_right]
 
 /-- A nontrivial linear relation between `Vbase` and `Rbase`, as data: the shared
-`Sapling.NontrivialRelation` at the two-point basis `![Vbase, Rbase]` with no generator family, so
-its coefficients are `α` (of `Vbase`) and `β` (of `Rbase`), not both zero, with
-`α • Vbase + β • Rbase = 0`.
-
-It is data rather than an `∃`: in a prime-order group such a relation always exists, so the content
-of the reduction is that an unbalanced bundle lets us *compute* one.
-
-When `α ≠ 0` it gives the discrete log `Vbase = (−β / α) • Rbase`. When `α = 0` it gives
-`β • Rbase = 0` with `β ≠ 0`, which is impossible once `Rbase ≠ 0`, as it is for Sapling's
-generators. The reduction from a relation to a discrete-log solution is not made here. -/
+`Sapling.NontrivialRelation` at the two-point basis `![Vbase, Rbase]` with no generator family. Its
+coefficients are `α` (of `Vbase`) and `β` (of `Rbase`), not both zero, with
+`α • Vbase + β • Rbase = 0` (`relation_two`, `nontrivial_two`). Turning it into a discrete-log
+solution is not done here. -/
+-- Reading the relation: if `α ≠ 0`, then `Vbase = (−β / α) • Rbase`, a discrete log. If `α = 0`,
+-- then `β • Rbase = 0` with `β ≠ 0`, impossible unless `Rbase = 0`. The spec's group hash never
+-- returns the identity, so Sapling's `Rbase` is nonzero, but that is not proved here.
 abbrev NontrivialRelation (Vbase Rbase : M) : Type _ :=
   Sapling.NontrivialRelation (F := F) (Fin.elim0 : Fin 0 → M) ![Vbase, Rbase]
 
-/-- The relation in its two-point form: `α • Vbase + β • Rbase = 0`. -/
+/-- The relation in its two-point form: `α • Vbase + β • Rbase = 0`. The discrete-log reading
+of a relation starts from this. -/
 theorem NontrivialRelation.relation_two {Vbase Rbase : M}
     (rel : NontrivialRelation (F := F) Vbase Rbase) :
     rel.α • Vbase + rel.β • Rbase = 0 := by
@@ -133,7 +128,7 @@ theorem NontrivialRelation.nontrivial_two {Vbase Rbase : M}
     · exact h.1
     · exact h.2
 
-/-- **Balance reduction (field level).** From `bvk = bsk' • Rbase` (`hExtract`),
+/-- From `bvk = bsk' • Rbase` (`hExtract`),
 `bvk = A • Vbase + B • Rbase` (`hSum`), and `A ≠ 0`, compute the nontrivial relation with
 coefficients `(A, B − bsk')`. -/
 def NontrivialRelation.ofImbalance (Vbase Rbase bvk : M) (A B bsk' : F) (hA : A ≠ 0)
@@ -210,10 +205,15 @@ def NontrivialRelation.ofBundleIntImbalance {r : ℕ} [Fact (Nat.Prime r)]
 
 /-! ### The generic overflow bound
 
-The generic step toward discharging the `hbound` hypothesis of
-`NontrivialRelation.ofBundleIntImbalance`: at most `N` values each with `|v| ≤ 2^64 − 1`, and a
-signed 64-bit `vBalance`, give a net value of magnitude below `r` once `vSumBound N < r`. Turning
-`hbound`'s spends and outputs into that single list of values is not done here. -/
+The generic step toward the `hbound` hypothesis of `NontrivialRelation.ofBundleIntImbalance`. For
+Sapling, the values will be the spend values followed by the negated output values (each still of
+magnitude `≤ 2^64 − 1`), with one count `N` bounding spends and outputs together; that bridge is not
+done here.
+
+The input bounds are looser than necessary, which is sound: `|vBalance| ≤ 2^63` admits one value
+more than the signed 64-bit range `[−2^63, 2^63 − 1]`, and with `n` spends, `m` outputs and
+`n + m ≤ N`, `vSumBound N` is at least the magnitude of every value in the spec's range
+`[−m · (2^64 − 1) − 2^63 + 1, n · (2^64 − 1) + 2^63]` (§4.13). -/
 
 /-- If every element of a list has `|x| ≤ c`, the sum has `|∑| ≤ length · c`. -/
 theorem abs_listSum_le {l : List ℤ} {c : ℤ} (h : ∀ x ∈ l, |x| ≤ c) :
@@ -240,16 +240,7 @@ def vSumBound (N : ℕ) : ℤ := (N : ℤ) * (2^64 - 1) + 2^63
 
 /-- **Generic no-overflow bound.** A list `vs` of at most `N` values, each with
 `|v| ≤ 2^64 − 1`, and a balance with `|vBalance| ≤ 2^63` give `(vs.sum − vBalance).natAbs < r`
-once `vSumBound N < r`.
-
-For Sapling, `vs` will be the spend values followed by the negated output values (each still has
-`|v| ≤ 2^64 − 1`), with `N` bounding the spend and output count together.
-
-Both input bounds are looser than necessary, which is sound. `|vBalance| ≤ 2^63` admits one value
-more than the signed 64-bit range `[−2^63, 2^63 − 1]`. With `n` spends, `m` outputs and
-`n + m ≤ N`, `vSumBound N` is at least the magnitude of every value in the spec's range
-`[−m · (2^64 − 1) − 2^63 + 1, n · (2^64 − 1) + 2^63]` (§4.13 "Balance and Binding Signature
-(Sapling)"). -/
+once `vSumBound N < r`. -/
 theorem natAbs_lt_of_vSumBound {r : ℕ} (vs : List ℤ) (vBalance : ℤ) (N : ℕ)
     (hv : ∀ v ∈ vs, |v| ≤ 2^64 - 1)
     (hn : vs.length ≤ N)
