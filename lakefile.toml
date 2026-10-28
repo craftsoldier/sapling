@@ -8,6 +8,13 @@ pp.unicode.fun = true # pretty-prints `fun a ↦ b`
 autoImplicit = false
 
 [[require]]
+name = "CompElliptic"
+git = "https://github.com/daira/CompElliptic"
+# The same revision as zcash/ironwood's lakefile.
+rev = "2c0444035a84db957f27f06433715058d1e890ad"
+
+# mathlib last, so that its pinned versions of the common transitive dependencies take precedence.
+[[require]]
 name = "mathlib"
 scope = "leanprover-community"
 rev = "v4.30.0"
